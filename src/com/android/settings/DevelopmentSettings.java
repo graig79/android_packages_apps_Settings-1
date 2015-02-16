@@ -31,6 +31,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
+import android.net.NetworkUtils;
+import android.net.wifi.IWifiManager;
+import android.net.wifi.WifiInfo;
 import android.hardware.usb.IUsbManager;
 import android.net.wifi.WifiManager;
 import android.os.AsyncTask;
@@ -45,12 +48,13 @@ import android.os.StrictMode;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
-import android.preference.CheckBoxPreference;
+import android.hardware.usb.UsbManager;
 import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
+import android.preference.SwitchPreference;
 import android.provider.SearchIndexableResource;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -61,10 +65,11 @@ import android.view.View;
 import android.view.accessibility.AccessibilityManager;
 import android.widget.Switch;
 import android.widget.TextView;
-
 import com.android.settings.search.BaseSearchIndexProvider;
 import com.android.settings.search.Indexable;
 import com.android.settings.widget.SwitchBar;
+import com.android.settings.util.Helpers;
+
 import dalvik.system.VMRuntime;
 
 import java.util.ArrayList;
@@ -90,20 +95,29 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
      */
     public static final String PREF_SHOW = "show";
 
+    /**
+     * Whether to show unnacounted and over-counted battery stats.  Default is false.
+     */
+    public static final String SHOW_UNAC_AND_OVERCOUNTED_STATS = "show_unac_and_overcounted_stats";
+
     private static final String ENABLE_ADB = "enable_adb";
+    private static final String ADB_NOTIFY = "adb_notify";
+    private static final String ADB_TCPIP = "adb_over_network";
     private static final String CLEAR_ADB_KEYS = "clear_adb_keys";
     private static final String ENABLE_TERMINAL = "enable_terminal";
+    private static final String RESTART_SYSTEMUI = "restart_systemui";
+    private static final String RESTART_SYSTEM = "restart_system";
     private static final String KEEP_SCREEN_ON = "keep_screen_on";
     private static final String BT_HCI_SNOOP_LOG = "bt_hci_snoop_log";
     private static final String ENABLE_OEM_UNLOCK = "oem_unlock_enable";
     private static final String ALLOW_MOCK_LOCATION = "allow_mock_location";
     private static final String HDCP_CHECKING_KEY = "hdcp_checking";
     private static final String HDCP_CHECKING_PROPERTY = "persist.sys.hdcp_checking";
+    private static final String ENABLE_QUICKBOOT= "enable_quickboot";
+    private static final String QUICKBOOT_PACKAGE_NAME = "com.qapp.quickboot";
     private static final String LOCAL_BACKUP_PASSWORD = "local_backup_password";
     private static final String HARDWARE_UI_PROPERTY = "persist.sys.ui.hw";
     private static final String MSAA_PROPERTY = "debug.egl.force_msaa";
-    private static final String BUGREPORT = "bugreport";
-    private static final String BUGREPORT_IN_POWER_KEY = "bugreport_in_power";
     private static final String OPENGL_TRACES_PROPERTY = "debug.egl.trace";
 
     private static final String DEBUG_APP_KEY = "debug_app";
@@ -145,11 +159,18 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private static final String OPENGL_TRACES_KEY = "enable_opengl_traces";
 
+    private static final String ROOT_ACCESS_KEY = "root_access";
+    private static final String ROOT_ACCESS_PROPERTY = "persist.sys.root_access";
+
     private static final String IMMEDIATELY_DESTROY_ACTIVITIES_KEY
             = "immediately_destroy_activities";
     private static final String APP_PROCESS_LIMIT_KEY = "app_process_limit";
 
     private static final String SHOW_ALL_ANRS_KEY = "show_all_anrs";
+
+    private static final String KILL_APP_LONGPRESS_BACK = "kill_app_longpress_back";
+
+    private static final String KILL_APP_LONGPRESS_TIMEOUT = "kill_app_longpress_timeout";
 
     private static final String PROCESS_STATS = "proc_stats";
 
@@ -170,45 +191,50 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     private DevicePolicyManager mDpm;
     private UserManager mUm;
     private WifiManager mWifiManager;
+    private UsbManager mUsbManager;
 
     private SwitchBar mSwitchBar;
     private boolean mLastEnabledState;
     private boolean mHaveDebugSettings;
     private boolean mDontPokeProperties;
 
-    private CheckBoxPreference mEnableAdb;
+    private SwitchPreference mShowUnacAndOvercounted;
+    private SwitchPreference mEnableAdb;
+    private SwitchPreference mAdbNotify;
+    private SwitchPreference mAdbOverNetwork;
     private Preference mClearAdbKeys;
-    private CheckBoxPreference mEnableTerminal;
-    private Preference mBugreport;
-    private CheckBoxPreference mBugreportInPower;
-    private CheckBoxPreference mKeepScreenOn;
-    private CheckBoxPreference mBtHciSnoopLog;
-    private CheckBoxPreference mEnableOemUnlock;
-    private CheckBoxPreference mAllowMockLocation;
-    private CheckBoxPreference mDebugViewAttributes;
+    private SwitchPreference mEnableTerminal;
+    private Preference mRestartSystemUI;
+    private Preference mRestartSystem;
+    private SwitchPreference mKeepScreenOn;
+    private SwitchPreference mBtHciSnoopLog;
+    private SwitchPreference mEnableOemUnlock;
+    private SwitchPreference mQuickBoot;
+    private SwitchPreference mAllowMockLocation;
+    private SwitchPreference mDebugViewAttributes;
 
     private PreferenceScreen mPassword;
     private String mDebugApp;
     private Preference mDebugAppPref;
-    private CheckBoxPreference mWaitForDebugger;
-    private CheckBoxPreference mVerifyAppsOverUsb;
-    private CheckBoxPreference mWifiDisplayCertification;
-    private CheckBoxPreference mWifiVerboseLogging;
-    private CheckBoxPreference mWifiAggressiveHandover;
+    private SwitchPreference mWaitForDebugger;
+    private SwitchPreference mVerifyAppsOverUsb;
+    private SwitchPreference mWifiDisplayCertification;
+    private SwitchPreference mWifiVerboseLogging;
+    private SwitchPreference mWifiAggressiveHandover;
 
-    private CheckBoxPreference mWifiAllowScansWithTraffic;
-    private CheckBoxPreference mStrictMode;
-    private CheckBoxPreference mPointerLocation;
-    private CheckBoxPreference mShowTouches;
-    private CheckBoxPreference mShowScreenUpdates;
-    private CheckBoxPreference mDisableOverlays;
-    private CheckBoxPreference mShowCpuUsage;
-    private CheckBoxPreference mForceHardwareUi;
-    private CheckBoxPreference mForceMsaa;
-    private CheckBoxPreference mShowHwScreenUpdates;
-    private CheckBoxPreference mShowHwLayersUpdates;
-    private CheckBoxPreference mDebugLayout;
-    private CheckBoxPreference mForceRtlLayout;
+    private SwitchPreference mWifiAllowScansWithTraffic;
+    private SwitchPreference mStrictMode;
+    private SwitchPreference mPointerLocation;
+    private SwitchPreference mShowTouches;
+    private SwitchPreference mShowScreenUpdates;
+    private SwitchPreference mDisableOverlays;
+    private SwitchPreference mShowCpuUsage;
+    private SwitchPreference mForceHardwareUi;
+    private SwitchPreference mForceMsaa;
+    private SwitchPreference mShowHwScreenUpdates;
+    private SwitchPreference mShowHwLayersUpdates;
+    private SwitchPreference mDebugLayout;
+    private SwitchPreference mForceRtlLayout;
     private ListPreference mDebugHwOverdraw;
     private ListPreference mLogdSize;
     private ListPreference mTrackFrameTime;
@@ -221,28 +247,34 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private ListPreference mSimulateColorSpace;
 
-    private CheckBoxPreference mUseNuplayer;
-    private CheckBoxPreference mUSBAudio;
-    private CheckBoxPreference mImmediatelyDestroyActivities;
+    private SwitchPreference mUseNuplayer;
+    private SwitchPreference mUSBAudio;
+    private SwitchPreference mImmediatelyDestroyActivities;
 
     private ListPreference mAppProcessLimit;
 
-    private CheckBoxPreference mShowAllANRs;
+    private SwitchPreference mShowAllANRs;
+    private SwitchPreference mKillAppLongpressBack;
+    private ListPreference mKillAppLongpressTimeout;
 
     private PreferenceScreen mProcessStats;
+    private ListPreference mRootAccess;
+    private Object mSelectedRootValue;
+
     private final ArrayList<Preference> mAllPrefs = new ArrayList<Preference>();
 
-    private final ArrayList<CheckBoxPreference> mResetCbPrefs
-            = new ArrayList<CheckBoxPreference>();
+    private final ArrayList<SwitchPreference> mResetSpPrefs
+            = new ArrayList<SwitchPreference>();
 
     private final HashSet<Preference> mDisabledPrefs = new HashSet<Preference>();
     // To track whether a confirmation dialog was clicked.
     private boolean mDialogClicked;
     private Dialog mEnableDialog;
     private Dialog mAdbDialog;
-
+    private Dialog mAdbTcpDialog;
     private Dialog mAdbKeysDialog;
     private boolean mUnavailable;
+    private Dialog mRootDialog;
 
     @Override
     public void onCreate(Bundle icicle) {
@@ -256,6 +288,8 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
         mWifiManager = (WifiManager) getSystemService(Context.WIFI_SERVICE);
 
+        mUsbManager = (UsbManager)getActivity().getSystemService(Context.USB_SERVICE);
+
         if (android.os.Process.myUserHandle().getIdentifier() != UserHandle.USER_OWNER
                 || mUm.hasUserRestriction(UserManager.DISALLOW_DEBUGGING_FEATURES)) {
             mUnavailable = true;
@@ -265,34 +299,40 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
         addPreferencesFromResource(R.xml.development_prefs);
 
+        mShowUnacAndOvercounted = findAndInitSwitchPref(SHOW_UNAC_AND_OVERCOUNTED_STATS);
+
         final PreferenceGroup debugDebuggingCategory = (PreferenceGroup)
                 findPreference(DEBUG_DEBUGGING_CATEGORY_KEY);
 
-        mEnableAdb = findAndInitCheckboxPref(ENABLE_ADB);
+        mEnableAdb = findAndInitSwitchPref(ENABLE_ADB);
+        mAdbNotify = findAndInitSwitchPref(ADB_NOTIFY);
         mClearAdbKeys = findPreference(CLEAR_ADB_KEYS);
+        mAdbOverNetwork = findAndInitSwitchPref(ADB_TCPIP);
         if (!SystemProperties.getBoolean("ro.adb.secure", false)) {
             if (debugDebuggingCategory != null) {
                 debugDebuggingCategory.removePreference(mClearAdbKeys);
             }
         }
         mAllPrefs.add(mClearAdbKeys);
-        mEnableTerminal = findAndInitCheckboxPref(ENABLE_TERMINAL);
-        if (!isPackageInstalled(getActivity(), TERMINAL_APP_PACKAGE)) {
+        mEnableTerminal = findAndInitSwitchPref(ENABLE_TERMINAL);
+        if (!Utils.isPackageInstalled(getActivity(), TERMINAL_APP_PACKAGE)) {
             debugDebuggingCategory.removePreference(mEnableTerminal);
             mEnableTerminal = null;
         }
 
-        mBugreport = findPreference(BUGREPORT);
-        mBugreportInPower = findAndInitCheckboxPref(BUGREPORT_IN_POWER_KEY);
-        mKeepScreenOn = findAndInitCheckboxPref(KEEP_SCREEN_ON);
-        mBtHciSnoopLog = findAndInitCheckboxPref(BT_HCI_SNOOP_LOG);
-        mEnableOemUnlock = findAndInitCheckboxPref(ENABLE_OEM_UNLOCK);
+        mRestartSystemUI = findPreference(RESTART_SYSTEMUI);
+        mRestartSystem = findPreference(RESTART_SYSTEM);
+
+        mKeepScreenOn = findAndInitSwitchPref(KEEP_SCREEN_ON);
+        mBtHciSnoopLog = findAndInitSwitchPref(BT_HCI_SNOOP_LOG);
+        mEnableOemUnlock = findAndInitSwitchPref(ENABLE_OEM_UNLOCK);
         if (!showEnableOemUnlockPreference()) {
             removePreference(mEnableOemUnlock);
             mEnableOemUnlock = null;
         }
-        mAllowMockLocation = findAndInitCheckboxPref(ALLOW_MOCK_LOCATION);
-        mDebugViewAttributes = findAndInitCheckboxPref(DEBUG_VIEW_ATTRIBUTES);
+        mQuickBoot = findAndInitSwitchPref(ENABLE_QUICKBOOT);
+        mAllowMockLocation = findAndInitSwitchPref(ALLOW_MOCK_LOCATION);
+        mDebugViewAttributes = findAndInitSwitchPref(DEBUG_VIEW_ATTRIBUTES);
         mPassword = (PreferenceScreen) findPreference(LOCAL_BACKUP_PASSWORD);
         mAllPrefs.add(mPassword);
 
@@ -302,12 +342,17 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             disableForUser(mClearAdbKeys);
             disableForUser(mEnableTerminal);
             disableForUser(mPassword);
+            disableForUser(mQuickBoot);
+        }
+
+        if (!Utils.isPackageInstalled(getActivity(), QUICKBOOT_PACKAGE_NAME, false)) {
+            removePreference(mQuickBoot);
         }
 
         mDebugAppPref = findPreference(DEBUG_APP_KEY);
         mAllPrefs.add(mDebugAppPref);
-        mWaitForDebugger = findAndInitCheckboxPref(WAIT_FOR_DEBUGGER_KEY);
-        mVerifyAppsOverUsb = findAndInitCheckboxPref(VERIFY_APPS_OVER_USB_KEY);
+        mWaitForDebugger = findAndInitSwitchPref(WAIT_FOR_DEBUGGER_KEY);
+        mVerifyAppsOverUsb = findAndInitSwitchPref(VERIFY_APPS_OVER_USB_KEY);
         if (!showVerifierSetting()) {
             if (debugDebuggingCategory != null) {
                 debugDebuggingCategory.removePreference(mVerifyAppsOverUsb);
@@ -315,25 +360,25 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                 mVerifyAppsOverUsb.setEnabled(false);
             }
         }
-        mStrictMode = findAndInitCheckboxPref(STRICT_MODE_KEY);
-        mPointerLocation = findAndInitCheckboxPref(POINTER_LOCATION_KEY);
-        mShowTouches = findAndInitCheckboxPref(SHOW_TOUCHES_KEY);
-        mShowScreenUpdates = findAndInitCheckboxPref(SHOW_SCREEN_UPDATES_KEY);
-        mDisableOverlays = findAndInitCheckboxPref(DISABLE_OVERLAYS_KEY);
-        mShowCpuUsage = findAndInitCheckboxPref(SHOW_CPU_USAGE_KEY);
-        mForceHardwareUi = findAndInitCheckboxPref(FORCE_HARDWARE_UI_KEY);
-        mForceMsaa = findAndInitCheckboxPref(FORCE_MSAA_KEY);
+        mStrictMode = findAndInitSwitchPref(STRICT_MODE_KEY);
+        mPointerLocation = findAndInitSwitchPref(POINTER_LOCATION_KEY);
+        mShowTouches = findAndInitSwitchPref(SHOW_TOUCHES_KEY);
+        mShowScreenUpdates = findAndInitSwitchPref(SHOW_SCREEN_UPDATES_KEY);
+        mDisableOverlays = findAndInitSwitchPref(DISABLE_OVERLAYS_KEY);
+        mShowCpuUsage = findAndInitSwitchPref(SHOW_CPU_USAGE_KEY);
+        mForceHardwareUi = findAndInitSwitchPref(FORCE_HARDWARE_UI_KEY);
+        mForceMsaa = findAndInitSwitchPref(FORCE_MSAA_KEY);
         mTrackFrameTime = addListPreference(TRACK_FRAME_TIME_KEY);
         mShowNonRectClip = addListPreference(SHOW_NON_RECTANGULAR_CLIP_KEY);
-        mShowHwScreenUpdates = findAndInitCheckboxPref(SHOW_HW_SCREEN_UPDATES_KEY);
-        mShowHwLayersUpdates = findAndInitCheckboxPref(SHOW_HW_LAYERS_UPDATES_KEY);
-        mDebugLayout = findAndInitCheckboxPref(DEBUG_LAYOUT_KEY);
-        mForceRtlLayout = findAndInitCheckboxPref(FORCE_RTL_LAYOUT_KEY);
+        mShowHwScreenUpdates = findAndInitSwitchPref(SHOW_HW_SCREEN_UPDATES_KEY);
+        mShowHwLayersUpdates = findAndInitSwitchPref(SHOW_HW_LAYERS_UPDATES_KEY);
+        mDebugLayout = findAndInitSwitchPref(DEBUG_LAYOUT_KEY);
+        mForceRtlLayout = findAndInitSwitchPref(FORCE_RTL_LAYOUT_KEY);
         mDebugHwOverdraw = addListPreference(DEBUG_HW_OVERDRAW_KEY);
-        mWifiDisplayCertification = findAndInitCheckboxPref(WIFI_DISPLAY_CERTIFICATION_KEY);
-        mWifiVerboseLogging = findAndInitCheckboxPref(WIFI_VERBOSE_LOGGING_KEY);
-        mWifiAggressiveHandover = findAndInitCheckboxPref(WIFI_AGGRESSIVE_HANDOVER_KEY);
-        mWifiAllowScansWithTraffic = findAndInitCheckboxPref(WIFI_ALLOW_SCAN_WITH_TRAFFIC_KEY);
+        mWifiDisplayCertification = findAndInitSwitchPref(WIFI_DISPLAY_CERTIFICATION_KEY);
+        mWifiVerboseLogging = findAndInitSwitchPref(WIFI_VERBOSE_LOGGING_KEY);
+        mWifiAggressiveHandover = findAndInitSwitchPref(WIFI_AGGRESSIVE_HANDOVER_KEY);
+        mWifiAllowScansWithTraffic = findAndInitSwitchPref(WIFI_ALLOW_SCAN_WITH_TRAFFIC_KEY);
         mLogdSize = addListPreference(SELECT_LOGD_SIZE_KEY);
 
         mWindowAnimationScale = addListPreference(WINDOW_ANIMATION_SCALE_KEY);
@@ -342,20 +387,28 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         mOverlayDisplayDevices = addListPreference(OVERLAY_DISPLAY_DEVICES_KEY);
         mOpenGLTraces = addListPreference(OPENGL_TRACES_KEY);
         mSimulateColorSpace = addListPreference(SIMULATE_COLOR_SPACE);
-        mUseNuplayer = findAndInitCheckboxPref(USE_NUPLAYER_KEY);
-        mUSBAudio = findAndInitCheckboxPref(USB_AUDIO_KEY);
+        mUseNuplayer = findAndInitSwitchPref(USE_NUPLAYER_KEY);
+        mUSBAudio = findAndInitSwitchPref(USB_AUDIO_KEY);
 
-        mImmediatelyDestroyActivities = (CheckBoxPreference) findPreference(
+        mImmediatelyDestroyActivities = (SwitchPreference) findPreference(
                 IMMEDIATELY_DESTROY_ACTIVITIES_KEY);
         mAllPrefs.add(mImmediatelyDestroyActivities);
-        mResetCbPrefs.add(mImmediatelyDestroyActivities);
+        mResetSpPrefs.add(mImmediatelyDestroyActivities);
 
         mAppProcessLimit = addListPreference(APP_PROCESS_LIMIT_KEY);
 
-        mShowAllANRs = (CheckBoxPreference) findPreference(
+        mShowAllANRs = (SwitchPreference) findPreference(
                 SHOW_ALL_ANRS_KEY);
         mAllPrefs.add(mShowAllANRs);
-        mResetCbPrefs.add(mShowAllANRs);
+        mResetSpPrefs.add(mShowAllANRs);
+
+        mKillAppLongpressBack = findAndInitSwitchPref(KILL_APP_LONGPRESS_BACK);
+
+        // Back long press timeout
+        mKillAppLongpressTimeout = addListPreference(KILL_APP_LONGPRESS_TIMEOUT);
+        int killAppLongpressTimeout = Settings.Secure.getIntForUser(getActivity().getContentResolver(),
+                Settings.Secure.KILL_APP_LONGPRESS_TIMEOUT, 2000, UserHandle.USER_CURRENT);
+        mKillAppLongpressTimeout.setOnPreferenceChangeListener(this);
 
         Preference hdcpChecking = findPreference(HDCP_CHECKING_KEY);
         if (hdcpChecking != null) {
@@ -365,6 +418,11 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
         mProcessStats = (PreferenceScreen) findPreference(PROCESS_STATS);
         mAllPrefs.add(mProcessStats);
+        mRootAccess = (ListPreference) findPreference(ROOT_ACCESS_KEY);
+        mRootAccess.setOnPreferenceChangeListener(this);
+        if (!removeRootOptionsIfRequired()) {
+            mAllPrefs.add(mRootAccess);
+        }
     }
 
     private ListPreference addListPreference(String prefKey) {
@@ -381,14 +439,31 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         }
     }
 
-    private CheckBoxPreference findAndInitCheckboxPref(String key) {
-        CheckBoxPreference pref = (CheckBoxPreference) findPreference(key);
+    private SwitchPreference findAndInitSwitchPref(String key) {
+        SwitchPreference pref = (SwitchPreference) findPreference(key);
         if (pref == null) {
             throw new IllegalArgumentException("Cannot find preference with key = " + key);
         }
+        if (key == ENABLE_ADB &&
+                UsbManager.USB_FUNCTION_CHARGING.equals(mUsbManager.getDefaultFunction())) {
+            pref.setSummary(getResources().getString(R.string.enable_adb_summary_charging));
+            disableForUser(pref);
+        }
         mAllPrefs.add(pref);
-        mResetCbPrefs.add(pref);
+        mResetSpPrefs.add(pref);
         return pref;
+    }
+
+    private boolean removeRootOptionsIfRequired() {
+        // user builds don't get root, and eng always gets root
+        if (!(Build.IS_DEBUGGABLE || "eng".equals(Build.TYPE))) {
+            if (mRootAccess != null) {
+                getPreferenceScreen().removePreference(mRootAccess);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @Override
@@ -469,6 +544,8 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             setPrefsEnabledState(mLastEnabledState);
         }
         mSwitchBar.show();
+        updateKillAppLongpressBackOptions();
+        updateKillAppLongpressTimeoutOptions();
     }
 
     @Override
@@ -482,8 +559,8 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         mSwitchBar.hide();
     }
 
-    void updateCheckBox(CheckBoxPreference checkBox, boolean value) {
-        checkBox.setChecked(value);
+    void updateSwitchPref(SwitchPreference switchPref, boolean value) {
+        switchPref.setChecked(value);
         mHaveDebugSettings |= value;
     }
 
@@ -491,26 +568,28 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         final Context context = getActivity();
         final ContentResolver cr = context.getContentResolver();
         mHaveDebugSettings = false;
-        updateCheckBox(mEnableAdb, Settings.Global.getInt(cr,
+        updateSwitchPref(mEnableAdb, Settings.Global.getInt(cr,
                 Settings.Global.ADB_ENABLED, 0) != 0);
+        mAdbNotify.setChecked(Settings.Secure.getInt(cr,
+                Settings.Secure.ADB_NOTIFY, 1) != 0);
+        updateAdbOverNetwork();
         if (mEnableTerminal != null) {
-            updateCheckBox(mEnableTerminal,
+            updateSwitchPref(mEnableTerminal,
                     context.getPackageManager().getApplicationEnabledSetting(TERMINAL_APP_PACKAGE)
                     == PackageManager.COMPONENT_ENABLED_STATE_ENABLED);
         }
-        updateCheckBox(mBugreportInPower, Settings.Secure.getInt(cr,
-                Settings.Secure.BUGREPORT_IN_POWER_MENU, 0) != 0);
-        updateCheckBox(mKeepScreenOn, Settings.Global.getInt(cr,
+        updateSwitchPref(mKeepScreenOn, Settings.Global.getInt(cr,
                 Settings.Global.STAY_ON_WHILE_PLUGGED_IN, 0) != 0);
-        updateCheckBox(mBtHciSnoopLog, Settings.Secure.getInt(cr,
+        updateSwitchPref(mBtHciSnoopLog, Settings.Secure.getInt(cr,
                 Settings.Secure.BLUETOOTH_HCI_LOG, 0) != 0);
         if (mEnableOemUnlock != null) {
-            updateCheckBox(mEnableOemUnlock, Utils.isOemUnlockEnabled(getActivity()));
+            updateSwitchPref(mEnableOemUnlock, Utils.isOemUnlockEnabled(getActivity()));
         }
-        updateCheckBox(mAllowMockLocation, Settings.Secure.getInt(cr,
+        updateSwitchPref(mAllowMockLocation, Settings.Secure.getInt(cr,
                 Settings.Secure.ALLOW_MOCK_LOCATION, 0) != 0);
-        updateCheckBox(mDebugViewAttributes, Settings.Global.getInt(cr,
+        updateSwitchPref(mDebugViewAttributes, Settings.Global.getInt(cr,
                 Settings.Global.DEBUG_VIEW_ATTRIBUTES, 0) != 0);
+        updateSwitchPref(mQuickBoot, Settings.System.getInt(cr, ENABLE_QUICKBOOT, 0) != 0);
         updateHdcpValues();
         updatePasswordSummary();
         updateDebuggerOptions();
@@ -534,7 +613,6 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         updateAppProcessLimitOptions();
         updateShowAllANRsOptions();
         updateVerifyAppsOverUsbOptions();
-        updateBugreportOptions();
         updateForceRtlOptions();
         updateLogdSizeValues();
         updateWifiDisplayCertificationOptions();
@@ -544,19 +622,49 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         updateSimulateColorSpace();
         updateUseNuplayerOptions();
         updateUSBAudioOptions();
+        updateRootAccessOptions();
+    }
+
+    private void updateAdbOverNetwork() {
+        int port = Settings.Secure.getInt(getActivity().getContentResolver(),
+                Settings.Secure.ADB_PORT, 0);
+        boolean enabled = port > 0;
+
+        updateSwitchPref(mAdbOverNetwork, enabled);
+
+        WifiInfo wifiInfo = null;
+
+        if (enabled) {
+            IWifiManager wifiManager = IWifiManager.Stub.asInterface(
+                    ServiceManager.getService(Context.WIFI_SERVICE));
+            try {
+                wifiInfo = wifiManager.getConnectionInfo();
+            } catch (RemoteException e) {
+                Log.e(TAG, "wifiManager, getConnectionInfo()", e);
+            }
+        }
+
+        if (wifiInfo != null) {
+            String hostAddress = NetworkUtils.intToInetAddress(
+                    wifiInfo.getIpAddress()).getHostAddress();
+            mAdbOverNetwork.setSummary(hostAddress + ":" + String.valueOf(port));
+        } else {
+            mAdbOverNetwork.setSummary(R.string.adb_over_network_summary);
+        }
     }
 
     private void resetDangerousOptions() {
         mDontPokeProperties = true;
-        for (int i=0; i<mResetCbPrefs.size(); i++) {
-            CheckBoxPreference cb = mResetCbPrefs.get(i);
-            if (cb.isChecked()) {
-                cb.setChecked(false);
-                onPreferenceTreeClick(null, cb);
+        for (int i=0; i<mResetSpPrefs.size(); i++) {
+            SwitchPreference sp = mResetSpPrefs.get(i);
+            if (sp.isChecked()) {
+                sp.setChecked(false);
+                onPreferenceTreeClick(null, sp);
             }
         }
         resetDebuggerOptions();
         writeLogdSizeOption(null);
+        resetRootAccessOptions();
         writeAnimationScaleOption(0, mWindowAnimationScale, null);
         writeAnimationScaleOption(1, mTransitionAnimationScale, null);
         writeAnimationScaleOption(2, mAnimatorDurationScale, null);
@@ -570,6 +678,48 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         updateAllOptions();
         mDontPokeProperties = false;
         pokeSystemProperties();
+        mShowUnacAndOvercounted.setChecked(false);
+    }
+
+    private void updateRootAccessOptions() {
+        String value = SystemProperties.get(ROOT_ACCESS_PROPERTY, "0");
+        mRootAccess.setValue(value);
+        mRootAccess.setSummary(getResources()
+                .getStringArray(R.array.root_access_entries)[Integer.valueOf(value)]);
+    }
+
+    public static boolean isRootForAppsEnabled() {
+        int value = SystemProperties.getInt(ROOT_ACCESS_PROPERTY, 0);
+        boolean daemonState =
+                SystemProperties.get("init.svc.su_daemon", "absent").equals("running");
+        return daemonState && (value == 1 || value == 3);
+    }
+
+    private void writeRootAccessOptions(Object newValue) {
+        String oldValue = SystemProperties.get(ROOT_ACCESS_PROPERTY, "0");
+        SystemProperties.set(ROOT_ACCESS_PROPERTY, newValue.toString());
+        if (Integer.valueOf(newValue.toString()) < 2 && !oldValue.equals(newValue)
+                && "1".equals(SystemProperties.get("service.adb.root", "0"))) {
+            SystemProperties.set("service.adb.root", "0");
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ADB_ENABLED, 0);
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ADB_ENABLED, 1);
+        }
+        updateRootAccessOptions();
+    }
+
+    private void resetRootAccessOptions() {
+        String oldValue = SystemProperties.get(ROOT_ACCESS_PROPERTY, "0");
+        SystemProperties.set(ROOT_ACCESS_PROPERTY, "0");
+        if (!oldValue.equals("0") && "1".equals(SystemProperties.get("service.adb.root", "0"))) {
+            SystemProperties.set("service.adb.root", "0");
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ADB_ENABLED, 0);
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ADB_ENABLED, 1);
+        }
+        updateRootAccessOptions();
     }
 
     private void updateHdcpValues() {
@@ -589,6 +739,44 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             hdcpChecking.setSummary(summaries[index]);
             hdcpChecking.setOnPreferenceChangeListener(this);
         }
+    }
+
+    private void writeKillAppLongpressBackOptions() {
+        Settings.Secure.putInt(getActivity().getContentResolver(),
+                Settings.Secure.KILL_APP_LONGPRESS_BACK,
+                mKillAppLongpressBack.isChecked() ? 1 : 0);
+    }
+
+    private void updateKillAppLongpressBackOptions() {
+        mKillAppLongpressBack.setChecked(Settings.Secure.getInt(
+            getActivity().getContentResolver(), Settings.Secure.KILL_APP_LONGPRESS_BACK, 0) != 0);
+    }
+
+    private void writeKillAppLongpressTimeoutOptions(Object newValue) {
+        int index = mKillAppLongpressTimeout.findIndexOfValue((String) newValue);
+        int value = Integer.valueOf((String) newValue);
+        Settings.Secure.putInt(getActivity().getContentResolver(),
+                Settings.Secure.KILL_APP_LONGPRESS_TIMEOUT, value);
+        mKillAppLongpressTimeout.setSummary(mKillAppLongpressTimeout.getEntries()[index]);
+    }
+
+    private void updateKillAppLongpressTimeoutOptions() {
+        String value = Settings.Secure.getString(getActivity().getContentResolver(),
+                Settings.Secure.KILL_APP_LONGPRESS_TIMEOUT);
+        if (value == null) {
+            value = "";
+        }
+
+        CharSequence[] values = mKillAppLongpressTimeout.getEntryValues();
+        for (int i = 0; i < values.length; i++) {
+            if (value.contentEquals(values[i])) {
+                mKillAppLongpressTimeout.setValueIndex(i);
+                mKillAppLongpressTimeout.setSummary(mKillAppLongpressTimeout.getEntries()[i]);
+                return;
+            }
+        }
+        mKillAppLongpressTimeout.setValueIndex(0);
+        mKillAppLongpressTimeout.setSummary(mKillAppLongpressTimeout.getEntries()[0]);
     }
 
     private void updatePasswordSummary() {
@@ -630,7 +818,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     private void updateDebuggerOptions() {
         mDebugApp = Settings.Global.getString(
                 getActivity().getContentResolver(), Settings.Global.DEBUG_APP);
-        updateCheckBox(mWaitForDebugger, Settings.Global.getInt(
+        updateSwitchPref(mWaitForDebugger, Settings.Global.getInt(
                 getActivity().getContentResolver(), Settings.Global.WAIT_FOR_DEBUGGER, 0) != 0);
         if (mDebugApp != null && mDebugApp.length() > 0) {
             String label;
@@ -652,7 +840,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateVerifyAppsOverUsbOptions() {
-        updateCheckBox(mVerifyAppsOverUsb, Settings.Global.getInt(getActivity().getContentResolver(),
+        updateSwitchPref(mVerifyAppsOverUsb, Settings.Global.getInt(getActivity().getContentResolver(),
                 Settings.Global.PACKAGE_VERIFIER_INCLUDE_ADB, 1) != 0);
         mVerifyAppsOverUsb.setEnabled(enableVerifierSetting());
     }
@@ -691,25 +879,6 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         return !SystemProperties.get(PERSISTENT_DATA_BLOCK_PROP).equals("");
     }
 
-    private void updateBugreportOptions() {
-        if ("user".equals(Build.TYPE)) {
-            final ContentResolver resolver = getActivity().getContentResolver();
-            final boolean adbEnabled = Settings.Global.getInt(
-                    resolver, Settings.Global.ADB_ENABLED, 0) != 0;
-            if (adbEnabled) {
-                mBugreport.setEnabled(true);
-                mBugreportInPower.setEnabled(true);
-            } else {
-                mBugreport.setEnabled(false);
-                mBugreportInPower.setEnabled(false);
-                mBugreportInPower.setChecked(false);
-                Settings.Secure.putInt(resolver, Settings.Secure.BUGREPORT_IN_POWER_MENU, 0);
-            }
-        } else {
-            mBugreportInPower.setEnabled(true);
-        }
-    }
-
     // Returns the current state of the system property that controls
     // strictmode flashes.  One of:
     //    0: not explicitly set one way or another
@@ -732,7 +901,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateStrictModeVisualOptions() {
-        updateCheckBox(mStrictMode, currentStrictModeActiveIndex() == 1);
+        updateSwitchPref(mStrictMode, currentStrictModeActiveIndex() == 1);
     }
 
     private void writePointerLocationOptions() {
@@ -741,7 +910,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updatePointerLocationOptions() {
-        updateCheckBox(mPointerLocation, Settings.System.getInt(getActivity().getContentResolver(),
+        updateSwitchPref(mPointerLocation, Settings.System.getInt(getActivity().getContentResolver(),
                 Settings.System.POINTER_LOCATION, 0) != 0);
     }
 
@@ -751,7 +920,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateShowTouchesOptions() {
-        updateCheckBox(mShowTouches, Settings.System.getInt(getActivity().getContentResolver(),
+        updateSwitchPref(mShowTouches, Settings.System.getInt(getActivity().getContentResolver(),
                 Settings.System.SHOW_TOUCHES, 0) != 0);
     }
 
@@ -769,11 +938,11 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                 @SuppressWarnings("unused")
                 int enableGL = reply.readInt();
                 int showUpdates = reply.readInt();
-                updateCheckBox(mShowScreenUpdates, showUpdates != 0);
+                updateSwitchPref(mShowScreenUpdates, showUpdates != 0);
                 @SuppressWarnings("unused")
                 int showBackground = reply.readInt();
                 int disableOverlays = reply.readInt();
-                updateCheckBox(mDisableOverlays, disableOverlays != 0);
+                updateSwitchPref(mDisableOverlays, disableOverlays != 0);
                 reply.recycle();
                 data.recycle();
             }
@@ -816,7 +985,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateHardwareUiOptions() {
-        updateCheckBox(mForceHardwareUi, SystemProperties.getBoolean(HARDWARE_UI_PROPERTY, false));
+        updateSwitchPref(mForceHardwareUi, SystemProperties.getBoolean(HARDWARE_UI_PROPERTY, false));
     }
 
     private void writeHardwareUiOptions() {
@@ -825,7 +994,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateMsaaOptions() {
-        updateCheckBox(mForceMsaa, SystemProperties.getBoolean(MSAA_PROPERTY, false));
+        updateSwitchPref(mForceMsaa, SystemProperties.getBoolean(MSAA_PROPERTY, false));
     }
 
     private void writeMsaaOptions() {
@@ -885,7 +1054,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateShowHwScreenUpdatesOptions() {
-        updateCheckBox(mShowHwScreenUpdates,
+        updateSwitchPref(mShowHwScreenUpdates,
                 SystemProperties.getBoolean(HardwareRenderer.DEBUG_DIRTY_REGIONS_PROPERTY, false));
     }
 
@@ -896,7 +1065,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateShowHwLayersUpdatesOptions() {
-        updateCheckBox(mShowHwLayersUpdates, SystemProperties.getBoolean(
+        updateSwitchPref(mShowHwLayersUpdates, SystemProperties.getBoolean(
                 HardwareRenderer.DEBUG_SHOW_LAYERS_UPDATES_PROPERTY, false));
     }
 
@@ -932,7 +1101,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateDebugLayoutOptions() {
-        updateCheckBox(mDebugLayout,
+        updateSwitchPref(mDebugLayout,
                 SystemProperties.getBoolean(View.DEBUG_LAYOUT_PROPERTY, false));
     }
 
@@ -998,7 +1167,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateUseNuplayerOptions() {
-        updateCheckBox(
+        updateSwitchPref(
                 mUseNuplayer, !SystemProperties.getBoolean(USE_AWESOMEPLAYER_PROPERTY, false));
     }
 
@@ -1009,7 +1178,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateUSBAudioOptions() {
-        updateCheckBox(mUSBAudio, Settings.Secure.getInt(getContentResolver(),
+        updateSwitchPref(mUSBAudio, Settings.Secure.getInt(getContentResolver(),
                 Settings.Secure.USB_AUDIO_AUTOMATIC_ROUTING_DISABLED, 0) != 0);
     }
 
@@ -1020,7 +1189,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateForceRtlOptions() {
-        updateCheckBox(mForceRtlLayout, Settings.Global.getInt(getActivity().getContentResolver(),
+        updateSwitchPref(mForceRtlLayout, Settings.Global.getInt(getActivity().getContentResolver(),
                 Settings.Global.DEVELOPMENT_FORCE_RTL, 0) != 0);
     }
 
@@ -1033,7 +1202,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateWifiDisplayCertificationOptions() {
-        updateCheckBox(mWifiDisplayCertification, Settings.Global.getInt(
+        updateSwitchPref(mWifiDisplayCertification, Settings.Global.getInt(
                 getActivity().getContentResolver(),
                 Settings.Global.WIFI_DISPLAY_CERTIFICATION_ON, 0) != 0);
     }
@@ -1046,7 +1215,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private void updateWifiVerboseLoggingOptions() {
         boolean enabled = mWifiManager.getVerboseLoggingLevel() > 0;
-        updateCheckBox(mWifiVerboseLogging, enabled);
+        updateSwitchPref(mWifiVerboseLogging, enabled);
     }
 
     private void writeWifiVerboseLoggingOptions() {
@@ -1055,7 +1224,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private void updateWifiAggressiveHandoverOptions() {
         boolean enabled = mWifiManager.getAggressiveHandover() > 0;
-        updateCheckBox(mWifiAggressiveHandover, enabled);
+        updateSwitchPref(mWifiAggressiveHandover, enabled);
     }
 
     private void writeWifiAggressiveHandoverOptions() {
@@ -1064,7 +1233,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private void updateWifiAllowScansWithTrafficOptions() {
         boolean enabled = mWifiManager.getAllowScansWithTraffic() > 0;
-        updateCheckBox(mWifiAllowScansWithTraffic, enabled);
+        updateSwitchPref(mWifiAllowScansWithTraffic, enabled);
     }
 
     private void writeWifiAllowScansWithTrafficOptions() {
@@ -1121,7 +1290,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateCpuUsageOptions() {
-        updateCheckBox(mShowCpuUsage, Settings.Global.getInt(getActivity().getContentResolver(),
+        updateSwitchPref(mShowCpuUsage, Settings.Global.getInt(getActivity().getContentResolver(),
                 Settings.Global.SHOW_PROCESSES, 0) != 0);
     }
 
@@ -1147,7 +1316,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateImmediatelyDestroyActivitiesOptions() {
-        updateCheckBox(mImmediatelyDestroyActivities, Settings.Global.getInt(
+        updateSwitchPref(mImmediatelyDestroyActivities, Settings.Global.getInt(
             getActivity().getContentResolver(), Settings.Global.ALWAYS_FINISH_ACTIVITIES, 0) != 0);
     }
 
@@ -1180,7 +1349,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
 
     private void writeAnimationScaleOption(int which, ListPreference pref, Object newValue) {
         try {
-            float scale = newValue != null ? Float.parseFloat(newValue.toString()) : 1;
+            float scale = newValue != null ? Float.parseFloat(newValue.toString()) : 0.75f;
             mWindowManager.setAnimationScale(which, scale);
             updateAnimationScaleValue(which, pref);
         } catch (RemoteException e) {
@@ -1273,7 +1442,7 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
     }
 
     private void updateShowAllANRsOptions() {
-        updateCheckBox(mShowAllANRs, Settings.Secure.getInt(
+        updateSwitchPref(mShowAllANRs, Settings.Secure.getInt(
             getActivity().getContentResolver(), Settings.Secure.ANR_SHOW_BACKGROUND, 0) != 0);
     }
 
@@ -1285,7 +1454,9 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         if (isChecked != mLastEnabledState) {
             if (isChecked) {
                 mDialogClicked = false;
-                if (mEnableDialog != null) dismissDialogs();
+                if (mEnableDialog != null) {
+                    dismissDialogs();
+                }
                 mEnableDialog = new AlertDialog.Builder(getActivity()).setMessage(
                         getActivity().getResources().getString(
                                 R.string.dev_settings_warning_message))
@@ -1326,7 +1497,9 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         if (preference == mEnableAdb) {
             if (mEnableAdb.isChecked()) {
                 mDialogClicked = false;
-                if (mAdbDialog != null) dismissDialogs();
+                if (mAdbDialog != null) {
+                    dismissDialogs();
+                }
                 mAdbDialog = new AlertDialog.Builder(getActivity()).setMessage(
                         getActivity().getResources().getString(R.string.adb_warning_message))
                         .setTitle(R.string.adb_warning_title)
@@ -1339,8 +1512,32 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                         Settings.Global.ADB_ENABLED, 0);
                 mVerifyAppsOverUsb.setEnabled(false);
                 mVerifyAppsOverUsb.setChecked(false);
-                updateBugreportOptions();
             }
+        } else if (preference == mAdbNotify) {
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ADB_NOTIFY,
+                    mAdbNotify.isChecked() ? 1 : 0);
+        } else if (preference == mAdbOverNetwork) {
+            if (mAdbOverNetwork.isChecked()) {
+                if (mAdbTcpDialog != null) {
+                    dismissDialogs();
+                }
+                mAdbTcpDialog = new AlertDialog.Builder(getActivity()).setMessage(
+                        getResources().getString(R.string.adb_over_network_warning))
+                        .setTitle(R.string.adb_over_network)
+                        .setPositiveButton(android.R.string.yes, this)
+                        .setNegativeButton(android.R.string.no, this)
+                        .show();
+                mAdbTcpDialog.setOnDismissListener(this);
+            } else {
+                Settings.Secure.putInt(getActivity().getContentResolver(),
+                        Settings.Secure.ADB_PORT, -1);
+                updateAdbOverNetwork();
+            }
+        } else if (preference == mRestartSystemUI) {
+            Helpers.restartSystemUI();
+        } else if (preference == mRestartSystem) {
+            Helpers.restartSystem();
         } else if (preference == mClearAdbKeys) {
             if (mAdbKeysDialog != null) dismissDialogs();
             mAdbKeysDialog = new AlertDialog.Builder(getActivity())
@@ -1353,10 +1550,6 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             pm.setApplicationEnabledSetting(TERMINAL_APP_PACKAGE,
                     mEnableTerminal.isChecked() ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                             : PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, 0);
-        } else if (preference == mBugreportInPower) {
-            Settings.Secure.putInt(getActivity().getContentResolver(),
-                    Settings.Secure.BUGREPORT_IN_POWER_MENU,
-                    mBugreportInPower.isChecked() ? 1 : 0);
         } else if (preference == mKeepScreenOn) {
             Settings.Global.putInt(getActivity().getContentResolver(),
                     Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
@@ -1374,6 +1567,9 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             Settings.Global.putInt(getActivity().getContentResolver(),
                     Settings.Global.DEBUG_VIEW_ATTRIBUTES,
                     mDebugViewAttributes.isChecked() ? 1 : 0);
+        } else if (preference == mQuickBoot) {
+            Settings.System.putInt(getActivity().getContentResolver(), ENABLE_QUICKBOOT,
+                    mQuickBoot.isChecked() ? 1 : 0);
         } else if (preference == mDebugAppPref) {
             startActivityForResult(new Intent(getActivity(), AppPicker.class), RESULT_DEBUG_APP);
         } else if (preference == mWaitForDebugger) {
@@ -1420,6 +1616,8 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             writeUseNuplayerOptions();
         } else if (preference == mUSBAudio) {
             writeUSBAudioOptions();
+        } else if (preference == mKillAppLongpressBack) {
+            writeKillAppLongpressBackOptions();
         } else {
             return super.onPreferenceTreeClick(preferenceScreen, preference);
         }
@@ -1467,6 +1665,27 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         } else if (preference == mSimulateColorSpace) {
             writeSimulateColorSpace(newValue);
             return true;
+        } else if (preference == mKillAppLongpressTimeout) {
+            writeKillAppLongpressTimeoutOptions(newValue);
+            return true;
+        } else if (preference == mRootAccess) {
+            if ("0".equals(SystemProperties.get(ROOT_ACCESS_PROPERTY, "0"))
+                    && !"0".equals(newValue)) {
+                mSelectedRootValue = newValue;
+                mDialogClicked = false;
+                if (mRootDialog != null) {
+                    dismissDialogs();
+                }
+                mRootDialog = new AlertDialog.Builder(getActivity())
+                        .setMessage(getResources().getString(R.string.root_access_warning_message))
+                        .setTitle(R.string.root_access_warning_title)
+                        .setPositiveButton(android.R.string.yes, this)
+                        .setNegativeButton(android.R.string.no, this).show();
+                mRootDialog.setOnDismissListener(this);
+            } else {
+                writeRootAccessOptions(newValue);
+            }
+            return true;
         }
         return false;
     }
@@ -1476,6 +1695,10 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
             mAdbDialog.dismiss();
             mAdbDialog = null;
         }
+        if (mAdbTcpDialog != null) {
+            mAdbTcpDialog.dismiss();
+            mAdbTcpDialog = null;
+        }
         if (mAdbKeysDialog != null) {
             mAdbKeysDialog.dismiss();
             mAdbKeysDialog = null;
@@ -1483,6 +1706,10 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
         if (mEnableDialog != null) {
             mEnableDialog.dismiss();
             mEnableDialog = null;
+        }
+        if (mRootDialog != null) {
+            mRootDialog.dismiss();
+            mRootDialog = null;
         }
     }
 
@@ -1492,12 +1719,16 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                 mDialogClicked = true;
                 Settings.Global.putInt(getActivity().getContentResolver(),
                         Settings.Global.ADB_ENABLED, 1);
+                Settings.Secure.putInt(getActivity().getContentResolver(),
+                        Settings.Secure.ADB_NOTIFY, 1);
+                mAdbNotify.setChecked(true);
                 mVerifyAppsOverUsb.setEnabled(true);
                 updateVerifyAppsOverUsbOptions();
-                updateBugreportOptions();
-            } else {
-                // Reset the toggle
-                mEnableAdb.setChecked(false);
+            }
+        } else if (dialog == mAdbTcpDialog) {
+            if (which == DialogInterface.BUTTON_POSITIVE) {
+                Settings.Secure.putInt(getActivity().getContentResolver(),
+                        Settings.Secure.ADB_PORT, 5555);
             }
         } else if (dialog == mAdbKeysDialog) {
             if (which == DialogInterface.BUTTON_POSITIVE) {
@@ -1516,9 +1747,13 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                         Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1);
                 mLastEnabledState = true;
                 setPrefsEnabledState(mLastEnabledState);
+            }
+        } else if (dialog == mRootDialog) {
+            if (which == DialogInterface.BUTTON_POSITIVE) {
+                writeRootAccessOptions(mSelectedRootValue);
             } else {
-                // Reset the toggle
-                mSwitchBar.setChecked(false);
+                // Reset the option
+                writeRootAccessOptions("0");
             }
         }
     }
@@ -1530,6 +1765,9 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                 mEnableAdb.setChecked(false);
             }
             mAdbDialog = null;
+        } else if (dialog == mAdbTcpDialog) {
+            updateAdbOverNetwork();
+            mAdbTcpDialog = null;
         } else if (dialog == mEnableDialog) {
             if (!mDialogClicked) {
                 mSwitchBar.setChecked(false);
@@ -1575,14 +1813,6 @@ public class DevelopmentSettings extends SettingsPreferenceFragment
                 }
             }
             return null;
-        }
-    }
-
-    private static boolean isPackageInstalled(Context context, String packageName) {
-        try {
-            return context.getPackageManager().getPackageInfo(packageName, 0) != null;
-        } catch (NameNotFoundException e) {
-            return false;
         }
     }
 

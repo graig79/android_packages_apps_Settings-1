@@ -16,6 +16,8 @@
 
 package com.android.settings.deviceinfo;
 
+import android.app.ActionBar;
+import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.content.BroadcastReceiver;
 import android.content.ClipboardManager;
@@ -35,13 +37,16 @@ import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.preference.Preference;
+import android.preference.PreferenceScreen;
 import android.preference.PreferenceActivity;
 import android.telephony.CellBroadcastMessage;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.PhoneStateListener;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
+import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ListAdapter;
@@ -53,7 +58,10 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.PhoneStateIntentReceiver;
 import com.android.internal.util.ArrayUtils;
 import com.android.settings.R;
+import com.android.settings.SelectSubscription;
 import com.android.settings.Utils;
+
+import org.cyanogenmod.hardware.SerialNumber;
 
 import java.lang.ref.WeakReference;
 
@@ -111,6 +119,8 @@ public class Status extends PreferenceActivity {
         KEY_SIGNAL_STRENGTH,
         KEY_ICC_ID
     };
+
+    private static final String BUTTON_SELECT_SUB_KEY = "button_aboutphone_msim_status";
 
     static final String CB_AREA_INFO_RECEIVED_ACTION =
             "android.cellbroadcastreceiver.CB_AREA_INFO_RECEIVED";
@@ -257,13 +267,23 @@ public class Status extends PreferenceActivity {
     protected void onCreate(Bundle icicle) {
         super.onCreate(icicle);
 
+        ActionBar mActionBar = getActionBar();
+        if (mActionBar != null) {
+            mActionBar.setDisplayHomeAsUpEnabled(true);
+        }
+
         mHandler = new MyHandler(this);
 
         mCM = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         mTelephonyManager = (TelephonyManager)getSystemService(TELEPHONY_SERVICE);
         mWifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
 
-        addPreferencesFromResource(R.xml.device_info_status);
+        if (isMultiSimEnabled()) {
+            addPreferencesFromResource(R.xml.device_info_msim_status);
+        } else {
+            addPreferencesFromResource(R.xml.device_info_status);
+        }
+
         mBatteryLevel = findPreference(KEY_BATTERY_LEVEL);
         mBatteryStatus = findPreference(KEY_BATTERY_STATUS);
         mBtAddress = findPreference(KEY_BT_ADDRESS);
@@ -275,7 +295,14 @@ public class Status extends PreferenceActivity {
         mUnknown = mRes.getString(R.string.device_info_default);
         mUnavailable = mRes.getString(R.string.status_unavailable);
 
-        if (UserHandle.myUserId() == UserHandle.USER_OWNER) {
+        ActionBar actionBar = getActionBar();
+        if (actionBar != null) {
+            // android.R.id.home will be triggered in onOptionsItemSelected()
+            actionBar.setDisplayHomeAsUpEnabled(true);
+        }
+
+        if (UserHandle.myUserId() == UserHandle.USER_OWNER &&
+                (!isMultiSimEnabled())) {
             mPhone = PhoneFactory.getDefaultPhone();
         }
         // Note - missing in zaku build, be careful later...
@@ -287,6 +314,11 @@ public class Status extends PreferenceActivity {
                 removePreferenceFromScreen(key);
             }
         } else {
+            if (SubscriptionManager.getActiveSubInfoCount() == 0) {
+                for (String key : PHONE_RELATED_ENTRIES) {
+                    removePreferenceFromScreen(key);
+                }
+            }
             // NOTE "imei" is the "Device ID" since it represents
             //  the IMEI in GSM and the MEID in CDMA
             if (mPhone.getPhoneName().equals("CDMA")) {
@@ -362,7 +394,7 @@ public class Status extends PreferenceActivity {
 
         updateConnectivity();
 
-        String serial = Build.SERIAL;
+        String serial = getSerialNumber();
         if (serial != null && !serial.equals("")) {
             setSummaryText(KEY_SERIAL_NUMBER, serial);
         } else {
@@ -389,6 +421,14 @@ public class Status extends PreferenceActivity {
                     return true;
                 }
             });
+
+        PreferenceScreen selectSub = (PreferenceScreen) findPreference(BUTTON_SELECT_SUB_KEY);
+        if (selectSub != null) {
+            Intent intent = selectSub.getIntent();
+            intent.putExtra(SelectSubscription.PACKAGE, "com.android.settings");
+            intent.putExtra(SelectSubscription.TARGET_CLASS,
+                    "com.android.settings.deviceinfo.msim.MSimSubscriptionStatus");
+        }
     }
 
     @Override
@@ -516,12 +556,14 @@ public class Status extends PreferenceActivity {
 
     private void updateServiceState(ServiceState serviceState) {
         int voiceState = serviceState.getState();
-        String voiceDisplay = getServiceStateString(voiceState);
-
         int dataState = serviceState.getDataRegState();
-        String dataDisplay = getServiceStateString(dataState);
 
-        setSummaryText(KEY_SERVICE_STATE, "Voice: " + voiceDisplay + " / Data: " + dataDisplay);
+        if (voiceState == dataState) {
+            setSummaryText(KEY_SERVICE_STATE, getServiceStateString(voiceState));
+        } else {
+            setSummaryText(KEY_SERVICE_STATE, mRes.getString(R.string.phone_service_state,
+                        getServiceStateString(voiceState), getServiceStateString(dataState)));
+        }
 
         if (serviceState.getRoaming()) {
             setSummaryText(KEY_ROAMING_STATE, mRes.getString(R.string.radioInfo_roaming_in));
@@ -635,5 +677,48 @@ public class Status extends PreferenceActivity {
         int h = (int)((t / 3600));
 
         return h + ":" + pad(m) + ":" + pad(s);
+    }
+
+    private boolean isMultiSimEnabled() {
+        return (SubscriptionManager.getActiveSubInfoCount() > 1);
+    }
+
+    private String getSerialNumber() {
+        try {
+            if (SerialNumber.isSupported()) {
+                return SerialNumber.getSerialNumber();
+            }
+        } catch (NoClassDefFoundError e) {
+            // Hardware abstraction framework not installed; fall through
+        }
+
+        return Build.SERIAL;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        final int itemId = item.getItemId();
+        switch (itemId) {
+            case android.R.id.home:
+                goUpToTopLevelSetting(this);
+                return true;
+            default:
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * Finish current Activity and go up to the top level Settings.
+     */
+    private static void goUpToTopLevelSetting(Activity activity) {
+        activity.finish();
+    }
+
+    public static String getSarValues(Resources res) {
+        String headLevel = String.format(res.getString(R.string.maximum_head_level,
+                res.getString(R.string.sar_head_level)));
+        String bodyLevel = String.format(res.getString(R.string.maximum_body_level,
+                res.getString(R.string.sar_body_level)));
+        return headLevel + "\n" + bodyLevel;
     }
 }

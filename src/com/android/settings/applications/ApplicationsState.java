@@ -216,7 +216,8 @@ public class ApplicationsState {
         public boolean filterApp(ApplicationInfo info) {
             if ((info.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0) {
                 return true;
-            } else if ((info.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+            } else if ((info.flags & ApplicationInfo.FLAG_SYSTEM) == 0
+                    && (info.flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) ==0) {
                 return true;
             }
             return false;
@@ -224,16 +225,15 @@ public class ApplicationsState {
     };
 
     public static final AppFilter ON_SD_CARD_FILTER = new AppFilter() {
-        final CanBeOnSdCardChecker mCanBeOnSdCardChecker
-                = new CanBeOnSdCardChecker();
-        
         public void init() {
-            mCanBeOnSdCardChecker.init();
         }
         
         @Override
         public boolean filterApp(ApplicationInfo info) {
-            return mCanBeOnSdCardChecker.check(info);
+            if ((info.flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) {
+                return true;
+            }
+            return false;
         }
     };
 
@@ -285,6 +285,28 @@ public class ApplicationsState {
 
     // Temporary for dispatching session callbacks.  Only touched by main thread.
     final ArrayList<Session> mActiveSessions = new ArrayList<Session>();
+
+    /**
+     * Releases the member variables in ApplicationsState
+     */
+    public void releaseApplicationState() {
+        synchronized (mEntriesMap) {
+            releaseSessions(mSessions);
+            mEntriesMap.clear();
+            mAppEntries.clear();
+            if (mApplications != null) {
+                mApplications.clear();
+            }
+        }
+    }
+
+    private void releaseSessions(ArrayList<Session> sessions) {
+        if (sessions == null) return;
+        while (!sessions.isEmpty()) {
+            sessions.get(0).release();
+        }
+        sessions.clear();
+    }
 
     /**
      * Receives notifications when applications are added/removed.
@@ -572,6 +594,10 @@ public class ApplicationsState {
             if (DEBUG) Log.i(TAG, "Rebuilding...");
             for (int i=0; i<apps.size(); i++) {
                 ApplicationInfo info = apps.get(i);
+                //protected app
+                if (info.protect) {
+                    continue;
+                }
                 if (filter == null || filter.filterApp(info)) {
                     synchronized (mEntriesMap) {
                         if (DEBUG_LOCKING) Log.v(TAG, "rebuild acquired lock");

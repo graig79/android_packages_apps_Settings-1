@@ -38,6 +38,7 @@ import android.preference.PreferenceScreen;
 import android.provider.SearchIndexableResource;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.widget.Toast;
 import com.android.settings.search.BaseSearchIndexProvider;
@@ -58,6 +59,8 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
     private static final String LOG_TAG = "DeviceInfoSettings";
     private static final String FILENAME_PROC_VERSION = "/proc/version";
     private static final String FILENAME_MSV = "/sys/board_properties/soc/msv";
+    private static final String FILENAME_PROC_MEMINFO = "/proc/meminfo";
+    private static final String FILENAME_PROC_CPUINFO = "/proc/cpuinfo";
 
     private static final String KEY_CONTAINER = "container";
     private static final String KEY_REGULATORY_INFO = "regulatory_info";
@@ -78,12 +81,17 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
     private static final String PROPERTY_EQUIPMENT_ID = "ro.ril.fccid";
     private static final String KEY_DEVICE_FEEDBACK = "device_feedback";
     private static final String KEY_SAFETY_LEGAL = "safetylegal";
-
-    static final int TAPS_TO_BE_A_DEVELOPER = 7;
+    private static final String KEY_DEVICE_CHIPSET = "device_chipset";
+    private static final String KEY_FUSIONSP_VERSION = "fusionsp_version";
+    private static final String KEY_MOD_BUILD_DATE = "build_date";
+    private static final String KEY_DEVICE_CPU = "device_cpu";
+    private static final String KEY_DEVICE_GPU = "device_gpu";
+    private static final String KEY_DEVICE_MEMORY = "device_memory";
+    private static final String KEY_DEVICE_REAR_CAMERA = "device_rear_camera";
+    private static final String KEY_DEVICE_FRONT_CAMERA = "device_front_camera";
+    private static final String KEY_DEVICE_SCREEN_RESOLUTION = "device_screen_resolution";
 
     long[] mHits = new long[3];
-    int mDevHitCountdown;
-    Toast mDevHitToast;
 
     @Override
     public void onCreate(Bundle icicle) {
@@ -99,7 +107,24 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
         setStringSummary(KEY_DEVICE_MODEL, Build.MODEL);
         setStringSummary(KEY_BUILD_NUMBER, Build.DISPLAY);
         findPreference(KEY_BUILD_NUMBER).setEnabled(true);
-        findPreference(KEY_KERNEL_VERSION).setSummary(getFormattedKernelVersion());
+        setStringSummary(KEY_KERNEL_VERSION, getFormattedKernelVersion());
+        findPreference(KEY_KERNEL_VERSION).setEnabled(true);
+        setValueSummary(KEY_FUSIONSP_VERSION, "ro.fusionsp.version");
+        setValueSummary(KEY_MOD_BUILD_DATE, "ro.build.date");
+
+        addStringPreference(KEY_DEVICE_CHIPSET,
+                SystemProperties.get("ro.device.chipset", null));
+        addStringPreference(KEY_DEVICE_CPU,
+                SystemProperties.get("ro.device.cpu", getCPUInfo()));
+        addStringPreference(KEY_DEVICE_GPU,
+                SystemProperties.get("ro.device.gpu", null));
+        addStringPreference(KEY_DEVICE_MEMORY, getMemInfo());
+        addStringPreference(KEY_DEVICE_FRONT_CAMERA,
+                SystemProperties.get("ro.device.front_cam", null));
+        addStringPreference(KEY_DEVICE_REAR_CAMERA,
+                SystemProperties.get("ro.device.rear_cam", null));
+        addStringPreference(KEY_DEVICE_SCREEN_RESOLUTION,
+                SystemProperties.get("ro.device.screen_res", null));
 
         if (!SELinux.isSELinuxEnabled()) {
             String status = getResources().getString(R.string.selinux_status_disabled);
@@ -122,7 +147,9 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
                 PROPERTY_EQUIPMENT_ID);
 
         // Remove Baseband version if wifi-only device
-        if (Utils.isWifiOnly(getActivity())) {
+        if ((Utils.isWifiOnly(getActivity())
+                || (TelephonyManager.getDefault().getPhoneCount() > 1))
+                && !Utils.showSimCardTile(getActivity())) {
             getPreferenceScreen().removePreference(findPreference(KEY_BASEBAND_VERSION));
         }
 
@@ -171,17 +198,9 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
-        mDevHitCountdown = getActivity().getSharedPreferences(DevelopmentSettings.PREF_FILE,
-                Context.MODE_PRIVATE).getBoolean(DevelopmentSettings.PREF_SHOW,
-                        android.os.Build.TYPE.equals("eng")) ? -1 : TAPS_TO_BE_A_DEVELOPER;
-        mDevHitToast = null;
-    }
-
-    @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
-        if (preference.getKey().equals(KEY_FIRMWARE_VERSION)) {
+        String prefKey = preference.getKey();
+        if (prefKey.equals(KEY_FIRMWARE_VERSION)) {
             System.arraycopy(mHits, 1, mHits, 0, mHits.length-1);
             mHits[mHits.length-1] = SystemClock.uptimeMillis();
             if (mHits[0] >= (SystemClock.uptimeMillis()-500)) {
@@ -194,50 +213,11 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
                     Log.e(LOG_TAG, "Unable to start activity " + intent.toString());
                 }
             }
-        } else if (preference.getKey().equals(KEY_BUILD_NUMBER)) {
-            // Don't enable developer options for secondary users.
-            if (UserHandle.myUserId() != UserHandle.USER_OWNER) return true;
-
-            final UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
-            if (um.hasUserRestriction(UserManager.DISALLOW_DEBUGGING_FEATURES)) return true;
-
-            if (mDevHitCountdown > 0) {
-                mDevHitCountdown--;
-                if (mDevHitCountdown == 0) {
-                    getActivity().getSharedPreferences(DevelopmentSettings.PREF_FILE,
-                            Context.MODE_PRIVATE).edit().putBoolean(
-                                    DevelopmentSettings.PREF_SHOW, true).apply();
-                    if (mDevHitToast != null) {
-                        mDevHitToast.cancel();
-                    }
-                    mDevHitToast = Toast.makeText(getActivity(), R.string.show_dev_on,
-                            Toast.LENGTH_LONG);
-                    mDevHitToast.show();
-                    // This is good time to index the Developer Options
-                    Index.getInstance(
-                            getActivity().getApplicationContext()).updateFromClassNameResource(
-                                    DevelopmentSettings.class.getName(), true, true);
-
-                } else if (mDevHitCountdown > 0
-                        && mDevHitCountdown < (TAPS_TO_BE_A_DEVELOPER-2)) {
-                    if (mDevHitToast != null) {
-                        mDevHitToast.cancel();
-                    }
-                    mDevHitToast = Toast.makeText(getActivity(), getResources().getQuantityString(
-                            R.plurals.show_dev_countdown, mDevHitCountdown, mDevHitCountdown),
-                            Toast.LENGTH_SHORT);
-                    mDevHitToast.show();
-                }
-            } else if (mDevHitCountdown < 0) {
-                if (mDevHitToast != null) {
-                    mDevHitToast.cancel();
-                }
-                mDevHitToast = Toast.makeText(getActivity(), R.string.show_dev_already,
-                        Toast.LENGTH_LONG);
-                mDevHitToast.show();
-            }
         } else if (preference.getKey().equals(KEY_DEVICE_FEEDBACK)) {
             sendFeedback();
+        } else if (prefKey.equals(KEY_KERNEL_VERSION)) {
+            setStringSummary(KEY_KERNEL_VERSION, getKernelVersion());
+            return true;
         }
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
@@ -305,6 +285,20 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
             return reader.readLine();
         } finally {
             reader.close();
+        }
+    }
+
+    private String getKernelVersion() {
+        String procVersionStr;
+        try {
+            procVersionStr = readLine(FILENAME_PROC_VERSION);
+            return procVersionStr;
+        } catch (IOException e) {
+            Log.e(LOG_TAG,
+                "IO Exception when getting kernel version for Device Info screen",
+                e);
+
+            return "Unavailable";
         }
     }
 
@@ -432,7 +426,7 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
                     keys.add(KEY_EQUIPMENT_ID);
                 }
                 // Remove Baseband version if wifi-only device
-                if (Utils.isWifiOnly(context)) {
+                if (Utils.isWifiOnly(context) && !Utils.showSimCardTile(context)) {
                     keys.add((KEY_BASEBAND_VERSION));
                 }
                 // Dont show feedback option if there is no reporter.
@@ -482,5 +476,78 @@ public class DeviceInfoSettings extends SettingsPreferenceFragment implements In
             }
         };
 
-}
+    private String getMemInfo() {
+        String result = null;
 
+        try {
+            /* /proc/meminfo entries follow this format:
+             * MemTotal:         362096 kB
+             * MemFree:           29144 kB
+             * Buffers:            5236 kB
+             * Cached:            81652 kB
+             */
+            String firstLine = readLine(FILENAME_PROC_MEMINFO);
+            if (firstLine != null) {
+                String parts[] = firstLine.split("\\s+");
+                if (parts.length == 3) {
+                    result = Long.parseLong(parts[1])/1024 + " MB";
+                }
+            }
+        } catch (IOException e) {}
+
+        return result;
+    }
+
+    private String getCPUInfo() {
+        String result = null;
+
+        try {
+            /* The expected /proc/cpuinfo output is as follows:
+             * Processor       : ARMv7 Processor rev 2 (v7l)
+             * BogoMIPS        : 272.62
+             *
+             * This needs updating, since
+             *
+             * Hammerhead output :
+             * Processor   : ARMv7 Processor rev 0 (v7l)
+             * processor   : 0
+             * BogoMIPS    : xxx
+             *
+             * Shamu output :
+             * processor   : 0
+             * model name  : ARMv7 Processor rev 1 (v7l)
+             * BogoMIPS    : xxx
+             *
+             * Continue reading the file until running into a line starting
+             * with either "model name" or "Processor" to meet both
+             */
+
+            BufferedReader reader = new BufferedReader(new FileReader(FILENAME_PROC_CPUINFO), 256);
+
+            String Line = reader.readLine();
+
+            while (Line != null) {
+                if (Line.indexOf("model name") == -1 &&
+                    Line.indexOf("Processor" ) == -1    ) {
+                    Line = reader.readLine();
+                } else {
+                    result = Line.split(":")[1].trim();
+                    break;
+                }
+            }
+
+            reader.close();
+
+        } catch (IOException e) {}
+
+        return result;
+    }
+
+    private void addStringPreference(String key, String value) {
+        if (value != null) {
+            setStringSummary(key, value);
+        } else {
+            getPreferenceScreen().removePreference(findPreference(key));
+        }
+    }
+}

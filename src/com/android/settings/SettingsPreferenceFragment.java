@@ -59,6 +59,12 @@ public class SettingsPreferenceFragment extends PreferenceFragment implements Di
 
     private String mHelpUrl;
 
+    // Needed for Lockscreen Notifications
+    protected Context mContext;
+
+    // Needed for Custom System Animations
+    protected ContentResolver mContentRes;
+
     // Cache the content resolver for async callbacks
     private ContentResolver mContentResolver;
 
@@ -89,6 +95,12 @@ public class SettingsPreferenceFragment extends PreferenceFragment implements Di
         if (icicle != null) {
             mPreferenceHighlighted = icicle.getBoolean(SAVE_HIGHLIGHTED_KEY);
         }
+
+        // Needed to use lockscreen notifications
+        mContext = getActivity().getApplicationContext();
+
+        // Needed to use custom system animations
+        mContentRes = getActivity().getContentResolver();
 
         // Prepare help url and enable menu if necessary
         int helpResource = getHelpResource();
@@ -512,5 +524,10 @@ public class SettingsPreferenceFragment extends PreferenceFragment implements Di
                     + ", requestCode: " + requestCode + ")");
             return false;
         }
+    }
+
+    // Needed for Custom System Animations
+    public void setTitle(int resId) {
+        getActivity().setTitle(resId);
     }
 }

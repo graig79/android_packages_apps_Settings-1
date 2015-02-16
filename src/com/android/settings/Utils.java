@@ -19,6 +19,7 @@ package com.android.settings;
 import static android.content.Intent.EXTRA_USER;
 
 import android.annotation.Nullable;
+import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.ActivityManagerNative;
 import android.app.AlertDialog;
@@ -41,6 +42,7 @@ import android.content.res.Resources.NotFoundException;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
@@ -52,8 +54,10 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.preference.Preference;
+import android.preference.PreferenceCategory;
 import android.preference.PreferenceFrameLayout;
 import android.preference.PreferenceGroup;
+import android.preference.PreferenceScreen;
 import android.provider.ContactsContract.CommonDataKinds;
 import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Data;
@@ -64,15 +68,19 @@ import android.telephony.TelephonyManager;
 import android.text.BidiFormatter;
 import android.text.TextDirectionHeuristics;
 import android.text.TextUtils;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.DisplayInfo;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.ListView;
 import android.widget.TabWidget;
 
 import com.android.internal.util.ImageUtils;
 import com.android.internal.util.UserIcons;
 import com.android.settings.UserSpinnerAdapter.UserDetails;
+import com.android.settings.bluetooth.BluetoothSettings;
 import com.android.settings.dashboard.DashboardCategory;
 import com.android.settings.dashboard.DashboardTile;
 import com.android.settings.drawable.CircleFramedDrawable;
@@ -132,6 +140,14 @@ public final class Utils {
     private static final int SECONDS_PER_HOUR = 60 * 60;
     private static final int SECONDS_PER_DAY = 24 * 60 * 60;
 
+    // Device types
+    private static final int DEVICE_PHONE = 0;
+    private static final int DEVICE_HYBRID = 1;
+    private static final int DEVICE_TABLET = 2;
+
+    // Device type reference
+    private static int sDeviceType = -1;
+
     /**
      * Finds a matching activity for a preference's intent. If a matching
      * activity is not found, it will remove the preference.
@@ -177,6 +193,199 @@ public final class Utils {
                     }
 
                     return true;
+                }
+            }
+        }
+
+        // Did not find a matching activity, so remove the preference
+        parentPreferenceGroup.removePreference(preference);
+
+        return false;
+    }
+
+    /**
+     * Finds a matching activity for a preference's intent. If a matching
+     * activity is not found, it will remove the preference. The icon, title and
+     * summary of the preference will also be updated with the values retrieved
+     * from the activity's meta-data elements. If no meta-data elements are
+     * specified then the preference title will be set to match the label of the
+     * activity, an icon and summary text will not be displayed.
+     *
+     * @param context The context.
+     * @param parentPreferenceGroup The preference group that contains the
+     *            preference whose intent is being resolved.
+     * @param preferenceKey The key of the preference whose intent is being
+     *            resolved.
+     *
+     * @return Whether an activity was found. If false, the preference was
+     *         removed.
+     *
+     * @see {@link #META_DATA_PREFERENCE_ICON}
+     *      {@link #META_DATA_PREFERENCE_TITLE}
+     *      {@link #META_DATA_PREFERENCE_SUMMARY}
+     */
+    public static boolean updatePreferenceToSpecificActivityFromMetaDataOrRemove(Context context,
+            Object parentPreferenceGroup, String preferenceKey) {
+
+        Preference preference = null;
+        if (parentPreferenceGroup instanceof PreferenceScreen) {
+            preference = ((PreferenceScreen) parentPreferenceGroup).findPreference(preferenceKey);
+        } else if (parentPreferenceGroup instanceof PreferenceCategory) {
+            preference = ((PreferenceCategory) parentPreferenceGroup).findPreference(preferenceKey);
+        }
+        if (preference == null) {
+            return false;
+        }
+
+        Intent intent = preference.getIntent();
+        if (intent != null) {
+            // Find the activity that is in the system image
+            PackageManager pm = context.getPackageManager();
+            List<ResolveInfo> list = pm.queryIntentActivities(intent, PackageManager.GET_META_DATA);
+            int listSize = list.size();
+            for (int i = 0; i < listSize; i++) {
+                ResolveInfo resolveInfo = list.get(i);
+                if ((resolveInfo.activityInfo.applicationInfo.flags
+                        & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                    Drawable icon = null;
+                    String title = null;
+                    String summary = null;
+
+                    // Get the activity's meta-data
+                    try {
+                        Resources res = pm
+                                .getResourcesForApplication(resolveInfo.activityInfo.packageName);
+                        Bundle metaData = resolveInfo.activityInfo.metaData;
+
+                        if (res != null && metaData != null) {
+                            if (preference instanceof IconPreferenceScreen) {
+                                icon = res.getDrawable(metaData.getInt(META_DATA_PREFERENCE_ICON));
+                            }
+                            title = res.getString(metaData.getInt(META_DATA_PREFERENCE_TITLE));
+                            summary = res.getString(metaData.getInt(META_DATA_PREFERENCE_SUMMARY));
+                        }
+                    } catch (NameNotFoundException e) {
+                        // Ignore
+                    } catch (NotFoundException e) {
+                        // Ignore
+                    }
+
+                    // Set the preference title to the activity's label if no
+                    // meta-data is found
+                    if (TextUtils.isEmpty(title)) {
+                        title = resolveInfo.loadLabel(pm).toString();
+                    }
+
+                    // Set icon, title and summary for the preference
+                    preference.setTitle(title);
+                    preference.setSummary(summary);
+                    if (preference instanceof IconPreferenceScreen) {
+                        IconPreferenceScreen iconPreference = (IconPreferenceScreen) preference;
+                        iconPreference.setIcon(icon);
+                    }
+
+                    // Replace the intent with this specific activity
+                    preference.setIntent(new Intent().setClassName(
+                            resolveInfo.activityInfo.packageName,
+                            resolveInfo.activityInfo.name));
+
+                    return true;
+                }
+            }
+        }
+
+        // Did not find a matching activity, so remove the preference
+        if (parentPreferenceGroup instanceof PreferenceScreen) {
+            ((PreferenceScreen) parentPreferenceGroup).removePreference(preference);
+        } else  {
+            ((PreferenceCategory) parentPreferenceGroup).removePreference(preference);
+        }
+
+        return false;
+    }
+
+    /**
+     * Finds a matching activity for a preference's intent. If a matching
+     * activity is not found, it will remove the preference. The icon, title and
+     * summary of the preference will also be updated with the values retrieved
+     * from the activity's meta-data elements. If no meta-data elements are
+     * specified then the preference title will be set to match the label of the
+     * activity, an icon and summary text will not be displayed.
+     *
+     * @param context The context.
+     * @param parentPreferenceGroup The preference group that contains the
+     *            preference whose intent is being resolved.
+     * @param preferenceKey The key of the preference whose intent is being
+     *            resolved.
+     *
+     * @return Whether an activity was found. If false, the preference was
+     *         removed.
+     *
+     * @see {@link #META_DATA_PREFERENCE_ICON}
+     *      {@link #META_DATA_PREFERENCE_TITLE}
+     *      {@link #META_DATA_PREFERENCE_SUMMARY}
+     */
+    public static boolean updatePreferenceToSpecificActivityFromMetaDataOrRemove(Context context,
+            PreferenceGroup parentPreferenceGroup, String preferenceKey) {
+
+        Preference preference = parentPreferenceGroup.findPreference(preferenceKey);
+        if (preference == null) {
+            return false;
+        }
+
+        Intent intent = preference.getIntent();
+        if (intent != null) {
+            // Find the activity that is in the system image
+            PackageManager pm = context.getPackageManager();
+            List<ResolveInfo> list = pm.queryIntentActivities(intent, PackageManager.GET_META_DATA);
+            int listSize = list.size();
+            for (int i = 0; i < listSize; i++) {
+                ResolveInfo resolveInfo = list.get(i);
+                if ((resolveInfo.activityInfo.applicationInfo.flags
+                        & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                    Drawable icon = null;
+                    String title = null;
+                    String summary = null;
+
+                    // Get the activity's meta-data
+                    try {
+                        Resources res = pm
+                                .getResourcesForApplication(resolveInfo.activityInfo.packageName);
+                        Bundle metaData = resolveInfo.activityInfo.metaData;
+
+                        if (res != null && metaData != null) {
+                            if (preference instanceof IconPreferenceScreen) {
+                                icon = res.getDrawable(metaData.getInt(META_DATA_PREFERENCE_ICON));
+                            }
+                            title = res.getString(metaData.getInt(META_DATA_PREFERENCE_TITLE));
+                            summary = res.getString(metaData.getInt(META_DATA_PREFERENCE_SUMMARY));
+                        }
+                    } catch (NameNotFoundException e) {
+                        // Ignore
+                    } catch (NotFoundException e) {
+                        // Ignore
+                    }
+
+                    // Set the preference title to the activity's label if no
+                    // meta-data is found
+                    if (TextUtils.isEmpty(title)) {
+                        title = resolveInfo.loadLabel(pm).toString();
+                    }
+
+                    // Set icon, title and summary for the preference
+                    preference.setTitle(title);
+                    preference.setSummary(summary);
+                    if (preference instanceof IconPreferenceScreen) {
+                        IconPreferenceScreen iconPreference = (IconPreferenceScreen) preference;
+                        iconPreference.setIcon(icon);
+                    }
+
+                    // Replace the intent with this specific activity
+                    preference.setIntent(new Intent().setClassName(
+                            resolveInfo.activityInfo.packageName,
+                            resolveInfo.activityInfo.name));
+
+                   return true;
                 }
             }
         }
@@ -576,6 +785,52 @@ public final class Utils {
                 .getUsers().size() > 1;
     }
 
+    public static boolean isRestrictedProfile(Context context) {
+        UserManager um = (UserManager) context.getSystemService(Context.USER_SERVICE);
+        return um.getUserInfo(um.getUserHandle()).isRestricted();
+    }
+
+    private static int getScreenType(Context context) {
+        if (sDeviceType == -1) {
+            WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+           DisplayInfo outDisplayInfo = new DisplayInfo();
+            wm.getDefaultDisplay().getDisplayInfo(outDisplayInfo);
+            int shortSize = Math.min(outDisplayInfo.logicalHeight, outDisplayInfo.logicalWidth);
+            int shortSizeDp = shortSize * DisplayMetrics.DENSITY_DEFAULT
+                    / outDisplayInfo.logicalDensityDpi;
+            if (shortSizeDp < 600) {
+                // 0-599dp: "phone" UI with a separate status & navigation bar
+                sDeviceType =  DEVICE_PHONE;
+            } else if (shortSizeDp < 720) {
+                // 600-719dp: "phone" UI with modifications for larger screens
+                sDeviceType = DEVICE_HYBRID;
+            } else {
+                // 720dp: "tablet" UI with a single combined status & navigation bar
+                sDeviceType = DEVICE_TABLET;
+            }
+        }
+        return sDeviceType;
+    }
+
+    public static boolean isPhone(Context context) {
+        return getScreenType(context) == DEVICE_PHONE;
+    }
+
+    public static boolean isHybrid(Context context) {
+        return getScreenType(context) == DEVICE_HYBRID;
+    }
+
+    public static boolean isTablet(Context context) {
+        return getScreenType(context) == DEVICE_TABLET;
+    }
+
+    /* returns whether the device has volume rocker or not. */
+    public static boolean hasVolumeRocker(Context context) {
+        final int deviceKeys = context.getResources().getInteger(
+                com.android.internal.R.integer.config_deviceHardwareKeys);
+        return (deviceKeys & ButtonSettings.KEY_MASK_VOLUME) != 0;
+    }
+
     /**
      * Start a new instance of the activity, showing only the given fragment.
      * When launched in this mode, the given preference fragment will be instantiated and fill the
@@ -636,7 +891,12 @@ public final class Utils {
     public static Intent onBuildStartFragmentIntent(Context context, String fragmentName,
             Bundle args, int titleResId, CharSequence title, boolean isShortcut) {
         Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.setClass(context, SubSettings.class);
+        if (BluetoothSettings.class.getName().equals(fragmentName)) {
+            intent.setClass(context, SubSettings.BluetoothSubSettings.class);
+            intent.putExtra(SettingsActivity.EXTRA_SHOW_FRAGMENT_AS_SUBSETTING, true);
+        } else {
+            intent.setClass(context, SubSettings.class);
+        }
         intent.putExtra(SettingsActivity.EXTRA_SHOW_FRAGMENT, fragmentName);
         intent.putExtra(SettingsActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS, args);
         intent.putExtra(SettingsActivity.EXTRA_SHOW_FRAGMENT_TITLE_RESID, titleResId);
@@ -876,9 +1136,7 @@ public final class Utils {
         final TelephonyManager tm =
                 (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
 
-        // TODO: Uncomment to re-enable SimSettings.
-        // return tm.getSimCount() > 0;
-        return false;
+        return tm.getSimCount() > 1;
     }
 
     /**
@@ -963,5 +1221,42 @@ public final class Utils {
             }
         }
         return sb.toString();
+    }
+
+    public static boolean isPackageInstalled(Context context, String pkg, boolean ignoreState) {
+        if (pkg != null) {
+            try {
+                PackageInfo pi = context.getPackageManager().getPackageInfo(pkg, 0);
+                if (!pi.applicationInfo.enabled && !ignoreState) {
+                    return false;
+                }
+            } catch (NameNotFoundException e) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static boolean isPackageInstalled(Context context, String pkg) {
+        return isPackageInstalled(context, pkg, true);
+    }
+
+    public static Context createPackageContext(Context context, String packageName) {
+        try {
+            return context.createPackageContext(packageName, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+            // fall through
+        }
+        return null;
+    }
+
+    public static Drawable getNamedDrawable(Context context, String name) {
+        if (context == null) {
+            return null;
+        }
+        final Resources res = context.getResources();
+        final int resId = res.getIdentifier(name, "drawable", context.getPackageName());
+        return resId > 0 ? res.getDrawable(resId) : null;
     }
 }

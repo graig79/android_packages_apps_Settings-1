@@ -36,6 +36,9 @@ import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
+import android.text.TextWatcher;
+import android.text.Editable;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -47,7 +50,7 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.TextView;
-
+import android.widget.Button;
 import com.android.settings.R;
 import com.android.settings.SettingsActivity;
 import com.android.settings.search.BaseSearchIndexProvider;
@@ -70,6 +73,7 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
     private static final int MENU_ID_SCAN = Menu.FIRST;
     private static final int MENU_ID_RENAME_DEVICE = Menu.FIRST + 1;
     private static final int MENU_ID_SHOW_RECEIVED = Menu.FIRST + 2;
+    private static final int MENU_ID_ACCEPT_ALL_FILES = Menu.FIRST + 3;
 
     /* Private intent to show the list of received files */
     private static final String BTOPP_ACTION_OPEN_RECEIVED_FILES =
@@ -186,7 +190,9 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
         }
 
         // Make the device only visible to connected devices.
-        mLocalAdapter.setScanMode(BluetoothAdapter.SCAN_MODE_CONNECTABLE);
+        if (mLocalAdapter != null) {
+            mLocalAdapter.setScanMode(BluetoothAdapter.SCAN_MODE_CONNECTABLE);
+        }
 
         if (isUiRestricted()) {
             return;
@@ -205,6 +211,10 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
         boolean isDiscovering = mLocalAdapter.isDiscovering();
         int textId = isDiscovering ? R.string.bluetooth_searching_for_devices :
             R.string.bluetooth_search_for_devices;
+
+        boolean acceptAllFilesIsEnabled = Settings.System.getInt(getContentResolver(),
+                Settings.System.BLUETOOTH_ACCEPT_ALL_FILES, 0) == 1;
+
         menu.add(Menu.NONE, MENU_ID_SCAN, 0, textId)
                 .setEnabled(bluetoothIsEnabled && !isDiscovering)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
@@ -212,6 +222,10 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
                 .setEnabled(bluetoothIsEnabled)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(Menu.NONE, MENU_ID_SHOW_RECEIVED, 0, R.string.bluetooth_show_received_files)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(Menu.NONE, MENU_ID_ACCEPT_ALL_FILES, 0, R.string.bluetooth_accept_all_files)
+                .setCheckable(true)
+                .setChecked(acceptAllFilesIsEnabled)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         super.onCreateOptionsMenu(menu, inflater);
     }
@@ -234,6 +248,13 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
                 Intent intent = new Intent(BTOPP_ACTION_OPEN_RECEIVED_FILES);
                 getActivity().sendBroadcast(intent);
                 return true;
+
+            case MENU_ID_ACCEPT_ALL_FILES:
+                item.setChecked(!item.isChecked());
+                Settings.System.putInt(getContentResolver(),
+                        Settings.System.BLUETOOTH_ACCEPT_ALL_FILES,
+                        item.isChecked() ? 1 : 0);
+                return true;
         }
         return super.onOptionsItemSelected(item);
     }
@@ -254,7 +275,8 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
         }
 
         mLocalManager.getCachedDeviceManager().clearNonBondedDevices();
-        mAvailableDevicesCategory.removeAll();
+        if (mAvailableDevicesCategory != null)
+            mAvailableDevicesCategory.removeAll();
         mInitialScanStarted = true;
         mLocalAdapter.startScanning(true);
     }
@@ -348,6 +370,10 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
                 break;
 
             case BluetoothAdapter.STATE_OFF:
+                /* reset the progress icon only when available device category present */
+                if(mAvailableDevicesCategoryIsPresent) {
+                    ((BluetoothProgressCategory)mAvailableDevicesCategory).setProgress(false);
+                }
                 messageId = R.string.bluetooth_empty_list_bluetooth_off;
                 if (isUiRestricted()) {
                     messageId = R.string.bluetooth_empty_list_user_restricted;
@@ -462,10 +488,29 @@ public final class BluetoothSettings extends DeviceListPreferenceFragment implem
                 }
             });
 
-            AlertDialog dialog = settingsDialog.create();
+            final AlertDialog dialog = settingsDialog.create();
             dialog.create();
             dialog.show();
+            deviceName.addTextChangedListener (new TextWatcher() {
 
+               @Override
+               public void afterTextChanged(Editable s) {
+                      Button mOkButton = dialog.getButton(DialogInterface.BUTTON_POSITIVE);
+                      if(mOkButton != null)
+                         mOkButton.setEnabled(s.length() != 0 && !(s.toString().trim().isEmpty()));
+               }
+               @Override
+               public void onTextChanged(CharSequence s, int start, int before, int count) {
+                      /* Not Used */
+               }
+               @Override
+               public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+                      Button mOkButton = dialog.getButton(DialogInterface.BUTTON_POSITIVE);
+                      if(mOkButton != null)
+                          mOkButton.setEnabled(false);
+               }
+
+            });
             // We must ensure that clicking on the EditText will bring up the keyboard.
             dialog.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);

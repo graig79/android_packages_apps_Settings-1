@@ -221,9 +221,19 @@
 
     <!-- Bluetooth Preferences -->
     <dimen name="bluetooth_dialog_padding">8dip</dimen>
-    <integer name="bluetooth_name_length">32</integer>
+    <integer name="bluetooth_name_length">248</integer>
     <dimen name="bluetooth_pairing_padding">20dp</dimen>
 
     <dimen name="wifi_divider_height">1px</dimen>
 
+    <!-- FAB Dimensions -->
+    <dimen name="fab_size">56dp</dimen>
+    <dimen name="fab_margin">16dp</dimen>
+    <dimen name="fab_icon_size">24dp</dimen>
+    <dimen name="fab_elevation_normal">8dp</dimen>
+    <dimen name="fab_elevation_pressed">6dp</dimen>
+
+    <dimen name="qs_tile_max_size">120dp</dimen>
+    <dimen name="qs_tile_max_padding">10dp</dimen>
+    <dimen name="qs_tile_dragged_z">10dp</dimen>
 </resources>

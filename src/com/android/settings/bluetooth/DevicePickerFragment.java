@@ -68,7 +68,8 @@ public final class DevicePickerFragment extends DeviceListPreferenceFragment {
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         menu.add(Menu.NONE, MENU_ID_REFRESH, 0, R.string.bluetooth_search_for_devices)
                 .setEnabled(true)
-                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+                .setIcon(com.android.internal.R.drawable.ic_menu_refresh)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         super.onCreateOptionsMenu(menu, inflater);
     }
 
@@ -104,8 +105,8 @@ public final class DevicePickerFragment extends DeviceListPreferenceFragment {
     }
 
     @Override
-    public void onPause() {
-        super.onPause();
+    public void onDestroy() {
+        super.onDestroy();
         /* Check if any device was selected, if no device selected
          * send  ACTION_DEVICE_NOT_SELECTED intent, otherwise
          * don;t do anything */

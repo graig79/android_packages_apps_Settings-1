@@ -88,6 +88,8 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.preference.Preference;
+import android.telephony.SubInfoRecord;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.text.format.DateUtils;
@@ -166,6 +168,8 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
     private static final String TAB_MOBILE = "mobile";
     private static final String TAB_WIFI = "wifi";
     private static final String TAB_ETHERNET = "ethernet";
+    // In multi-sim device, UI will show tab names as SIM1, SIM2, etc.
+    private static final String TAB_SIM = "SIM";
 
     private static final String TAG_CONFIRM_DATA_DISABLE = "confirmDataDisable";
     private static final String TAG_CONFIRM_LIMIT = "confirmLimit";
@@ -299,7 +303,7 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             throw new RuntimeException(e);
         }
 
-        mShowWifi = mPrefs.getBoolean(PREF_SHOW_WIFI, false);
+        mShowWifi = mPrefs.getBoolean(PREF_SHOW_WIFI, true);
         mShowEthernet = mPrefs.getBoolean(PREF_SHOW_ETHERNET, false);
 
         // override preferences when no mobile radio
@@ -580,8 +584,17 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             }
             case R.id.data_usage_menu_cellular_networks: {
                 final Intent intent = new Intent(Intent.ACTION_MAIN);
-                intent.setComponent(new ComponentName("com.android.phone",
-                        "com.android.phone.MobileNetworkSettings"));
+                if (TelephonyManager.getDefault().getPhoneCount() > 1) {
+                    intent.setClassName("com.android.phone",
+                            "com.android.phone.msim.SelectSubscription");
+                    intent.putExtra(SelectSubscription.PACKAGE,
+                             "com.android.phone");
+                    intent.putExtra(SelectSubscription.TARGET_CLASS,
+                            "com.android.phone.msim.MSimMobileNetworkSubSettings");
+                } else {
+                    intent.setComponent(new ComponentName("com.android.phone",
+                            "com.android.phone.MobileNetworkSettings"));
+                }
                 startActivity(intent);
                 return true;
             }
@@ -649,7 +662,15 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             mTabHost.addTab(buildTabSpec(TAB_3G, R.string.data_usage_tab_3g));
             mTabHost.addTab(buildTabSpec(TAB_4G, R.string.data_usage_tab_4g));
         } else if (hasReadyMobileRadio(context)) {
-            mTabHost.addTab(buildTabSpec(TAB_MOBILE, R.string.data_usage_tab_mobile));
+            int phoneCount = TelephonyManager.getDefault().getPhoneCount();
+            if (phoneCount > 1) {
+                for (int i = 0; i < phoneCount; i++) {
+                    mTabHost.addTab(buildTabSpec(getSubTag(i+1), getSubTitle(i+1)));
+                }
+            } else {
+                mTabHost.addTab(buildTabSpec(TAB_MOBILE,
+                        R.string.data_usage_tab_mobile));
+            }
         }
         if (mShowWifi && hasWifiRadio(context)) {
             mTabHost.addTab(buildTabSpec(TAB_WIFI, R.string.data_usage_tab_wifi));
@@ -695,6 +716,11 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
                 mEmptyTabContent);
     }
 
+    private TabSpec buildTabSpec(String tag, String title) {
+        return mTabHost.newTabSpec(tag).setIndicator(title)
+                .setContent(mEmptyTabContent);
+    }
+
     private OnTabChangeListener mTabListener = new OnTabChangeListener() {
         @Override
         public void onTabChanged(String tabId) {
@@ -738,6 +764,28 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             setPreferenceTitle(mDisableAtLimitView, R.string.data_usage_disable_mobile_limit);
             mTemplate = buildTemplateMobileAll(getActiveSubscriberId(context));
 
+        } else if (currentTab.startsWith(TAB_SIM)) {
+            for (int i = 0; i < TelephonyManager.getDefault()
+                    .getPhoneCount(); i++) {
+                if (currentTab.equals(getSubTag(i+1))) {
+                    if (TelephonyManager.getDefault().getMultiSimConfiguration() ==
+                            TelephonyManager.MultiSimVariants.DSDS ||
+                            TelephonyManager.getDefault().getMultiSimConfiguration() ==
+                            TelephonyManager.MultiSimVariants.TSTS) {
+                        // only one of the SIMs can have Data enabled, so...
+                        if (SubscriptionManager.getDefaultDataPhoneId() == i) {
+                            mDataEnabledView.setVisibility(View.VISIBLE);
+                        } else {
+                            mDataEnabledView.setVisibility(View.GONE);
+                        }
+                    }
+                    setPreferenceTitle(mDataEnabledView,
+                            R.string.data_usage_enable_mobile);
+                    setPreferenceTitle(mDisableAtLimitView,
+                            R.string.data_usage_disable_mobile_limit);
+                    mTemplate = buildTemplateMobileAll(getActiveSubscriberId(i));
+                }
+            }
         } else if (TAB_3G.equals(currentTab)) {
             setPreferenceTitle(mDataEnabledView, R.string.data_usage_enable_3g);
             setPreferenceTitle(mDisableAtLimitView, R.string.data_usage_disable_3g_limit);
@@ -912,6 +960,13 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
     private Boolean mMobileDataEnabled;
 
     private boolean isMobileDataEnabled() {
+        // How about exposing sub based API like TelephonyManager.getDataEnabled(long subId);
+        if (mCurrentTab.startsWith(TAB_SIM)) {
+            // as per SUB, return the individual flag
+            return android.provider.Settings.Global.getInt(getActivity().getContentResolver(),
+                    android.provider.Settings.Global.MOBILE_DATA + multiSimGetCurrentSub(), 0) != 0;
+        }
+
         if (mMobileDataEnabled != null) {
             // TODO: deprecate and remove this once enabled flag is on policy
             return mMobileDataEnabled;
@@ -922,8 +977,20 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
 
     private void setMobileDataEnabled(boolean enabled) {
         if (LOGD) Log.d(TAG, "setMobileDataEnabled()");
-        mTelephonyManager.setDataEnabled(enabled);
-        mMobileDataEnabled = enabled;
+        // How about exposing sub based API like TelephonyManager.setDataEnabled(long subId);
+        if (mCurrentTab.startsWith(TAB_SIM)) {
+            int phoneId = multiSimGetCurrentSub();
+
+            // as per phone, set the individual flag
+            android.provider.Settings.Global.putInt(getActivity().getContentResolver(),
+                    android.provider.Settings.Global.MOBILE_DATA + phoneId, enabled ? 1 : 0);
+
+            long[] subId = SubscriptionManager.getSubId(phoneId);
+            mTelephonyManager.setDataEnabledUsingSubId(subId[0], enabled);
+        } else {
+            mTelephonyManager.setDataEnabled(enabled);
+            mMobileDataEnabled = enabled;
+        }
         updatePolicy(false);
     }
 
@@ -968,13 +1035,23 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
         boolean dataEnabledVisible = mDataEnabledSupported;
         boolean disableAtLimitVisible = mDisableAtLimitSupported;
 
+        if (dataEnabledVisible &&
+            (TelephonyManager.getDefault().getMultiSimConfiguration()
+                == TelephonyManager.MultiSimVariants.DSDS
+            || TelephonyManager.getDefault().getMultiSimConfiguration()
+                == TelephonyManager.MultiSimVariants.TSTS) &&
+            (!mTabHost.getCurrentTabTag().equals(getSubTag(SubscriptionManager.getDefaultDataPhoneId()+1)))
+        ) {
+            dataEnabledVisible = false;
+        }
+
         if (isAppDetailMode()) {
             dataEnabledVisible = false;
             disableAtLimitVisible = false;
         }
 
         // TODO: move enabled state directly into policy
-        if (TAB_MOBILE.equals(mCurrentTab)) {
+        if (TAB_MOBILE.equals(mCurrentTab) || mCurrentTab.startsWith(TAB_SIM)) {
             mBinding = true;
             mDataEnabled.setChecked(isMobileDataEnabled());
             mBinding = false;
@@ -1082,7 +1159,7 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
 
             final boolean dataEnabled = !mDataEnabled.isChecked();
             final String currentTab = mCurrentTab;
-            if (TAB_MOBILE.equals(currentTab)) {
+            if (TAB_MOBILE.equals(currentTab) || currentTab.startsWith(TAB_SIM)) {
                 if (dataEnabled) {
                     setMobileDataEnabled(true);
                 } else {
@@ -1323,6 +1400,11 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
         final TelephonyManager tele = TelephonyManager.from(context);
         final String actualSubscriberId = tele.getSubscriberId();
         return SystemProperties.get(TEST_SUBSCRIBER_PROP, actualSubscriberId);
+    }
+
+    private static String getActiveSubscriberId(int phoneId) {
+        long[] subId = SubscriptionManager.getSubId(phoneId);
+        return TelephonyManager.getDefault().getSubscriberId(subId[0]);
     }
 
     private DataUsageChartListener mChartListener = new DataUsageChartListener() {
@@ -1809,6 +1891,10 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             } else if (TAB_MOBILE.equals(currentTab)) {
                 message = res.getString(R.string.data_usage_limit_dialog_mobile);
                 limitBytes = Math.max(5 * GB_IN_BYTES, minLimitBytes);
+            } else if (currentTab.startsWith(TAB_SIM)) {
+                message = res.getString(R.string.data_usage_limit_dialog_mobile);
+                limitBytes = Math.max(5 * GB_IN_BYTES, minLimitBytes);
+
             } else {
                 throw new IllegalArgumentException("unknown current tab: " + currentTab);
             }
@@ -2265,7 +2351,10 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
         final TelephonyManager tele = TelephonyManager.from(context);
 
         // require both supported network and ready SIM
-        return conn.isNetworkSupported(TYPE_MOBILE) && tele.getSimState() == SIM_STATE_READY;
+        long defaultSubId = SubscriptionManager.getDefaultDataSubId();
+        int slotId = SubscriptionManager.getSlotId(defaultSubId);
+        return conn.isNetworkSupported(TYPE_MOBILE) &&
+                tele.getSimState(slotId) == SIM_STATE_READY;
     }
 
     /**
@@ -2485,4 +2574,49 @@ public class DataUsageSummary extends HighlightingFragment implements Indexable 
             }
         };
 
+    // Utility function for support Mobile data per sub support.
+    // get tab name for a special sub when there are more than one sub.
+    private String getSubTag(int i) {
+        if (i <= 0) {
+            return "";
+       } else {
+            return TAB_SIM + i;
+        }
+    }
+
+    // get title of a special sub when there are more than one sub.
+    private String getSubTitle(int i) {
+        if (i <= 0) {
+            return "";
+        } else {
+            // i-1 is supposed to be the phoneId
+            long[] mSubId = SubscriptionManager.getSubId(i-1);
+            if (mSubId.length > 0) {
+                SubInfoRecord mSubInfo = null;
+                for (int j = 0; j < mSubId.length && mSubInfo == null; j++) {
+                    mSubInfo = SubscriptionManager.getSubInfoForSubscriber(mSubId[j]);
+                }
+                if (mSubInfo != null &&
+                        mSubInfo.displayName != null &&
+                        mSubInfo.displayName != "") {
+                   return mSubInfo.displayName;
+                }
+            }
+            return getText(R.string.data_usage_tab_slot).toString() + " " + i;
+        }
+    }
+
+    // Get current sub from the tab name.
+    private int multiSimGetCurrentSub() {
+        // Findout the current sub
+        for (int i = 0; i < TelephonyManager.getDefault()
+                    .getPhoneCount(); i++) {
+            if (mCurrentTab.equals(getSubTag(i+1))) {
+                return i;
+            }
+        }
+
+        // only as a default support, should not be hit.
+        return 0;
+    }
 }
